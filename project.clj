@@ -1,0 +1,18 @@
+(defproject customer-segmentation-example "0.0.1-SNAPSHOT"
+  :description "FIXME: write description"
+  :url "http://example.com/FIXME"
+  :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
+            :url "https://www.eclipse.org/legal/epl-2.0/"}
+  :dependencies [[org.clojure/clojure "1.10.1"]
+                 [zero.one/geni "0.0.7"]]
+  :profiles {:provided
+             {:dependencies [[ml.dmlc/xgboost4j-spark_2.12 "1.0.0"]
+                             [ml.dmlc/xgboost4j_2.12 "1.0.0"]
+                             [org.apache.spark/spark-core_2.12 "2.4.6"]
+                             [org.apache.spark/spark-hive_2.12 "2.4.6"]
+                             [org.apache.spark/spark-mllib_2.12 "2.4.6"]
+                             [org.apache.spark/spark-sql_2.12 "2.4.6"]
+                             [org.apache.spark/spark-streaming_2.12 "2.4.6"]]}
+             :uberjar {:aot :all}}
+  :main ^:skip-aot customer-segmentation-example.core
+  :target-path "target/%s")
