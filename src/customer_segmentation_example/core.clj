@@ -35,7 +35,7 @@
                   (g/< :price 0.01)
                   (g/< :quantity 1)))
       (g/group-by :customer-id :descriptor)
-      (g/agg {:log-spend (g/log (g/sum (g/* :price :quantity)))})
+      (g/agg {:log-spend (g/log1p (g/sum (g/* :price :quantity)))})
       (g/order-by (g/desc :log-spend))
       g/cache))
 
@@ -59,10 +59,10 @@
                        :output-col :descriptor
                        :labels (ml/labels (first (ml/stages pipeline-model)))}))
 
-;; TODO: vector literals
-;; TODO: .itemFactors .userFactors
+(def als-model (last (ml/stages pipeline-model)))
+
 (def shared-patterns
-  (-> (.itemFactors (last (ml/stages pipeline-model)))
+  (-> (ml/item-factors als-model)
       (ml/transform id->descriptor)
       (g/select :descriptor (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
@@ -77,7 +77,7 @@
 
 
 (def customer-segments
-  (-> (.userFactors (last (ml/stages pipeline-model)))
+  (-> (ml/user-factors als-model)
       (g/select (g/as :id :customer-id) (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
@@ -89,7 +89,7 @@
 
 (-> shared-patterns
     (g/group-by :pattern-id)
-    (g/agg {:descriptors (g/array-sort (g/collect-set "descriptor"))}) ;; TODO: change to keyword
+    (g/agg {:descriptors (g/array-sort (g/collect-set :descriptor))})
     (g/order-by :pattern-id)
     g/show)
 
