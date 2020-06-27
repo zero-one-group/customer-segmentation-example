@@ -7,31 +7,35 @@
 (defonce spark (g/create-spark-session {}))
 
 (def invoices
-  (-> (g/read-csv! spark "/data/online_retail_ii")
+  (-> (g/read-csv! spark "data/online_retail_ii")
       (g/select
-        {:invoice      :Invoice
-         :stock-code   :StockCode
+        {:invoice      (g/int :Invoice)
+         :stock-code   (g/int :StockCode)
          :description  (g/coalesce (g/lower :Description) (g/lit ""))
          :quantity     (g/int :Quantity)
          :invoice-date (g/to-timestamp :InvoiceDate "d/M/yyyy HH:mm")
-         :price        :Price
+         :price        (g/double :Price)
          :customer-id  (g/int "Customer ID")
-         :country      :Country})
-      g/cache))
+         :country      :Country})))
 
-(def log-spending
+(def descriptors
   (-> invoices
-      (ml/transform (ml/tokeniser {:input-col  :description
-                                   :output-col :descriptors}))
-      (ml/transform (ml/stop-words-remover {:input-col  :descriptors
-                                            :output-col :cleaned-descriptors}))
+      (ml/transform
+        (ml/tokeniser {:input-col  :description
+                       :output-col :descriptors}))
+      (ml/transform
+        (ml/stop-words-remover {:input-col  :descriptors
+                                :output-col :cleaned-descriptors}))
       (g/with-column :descriptor (g/explode :cleaned-descriptors))
       (g/with-column :descriptor (g/regexp-replace :descriptor
                                                    (g/lit "[^a-zA-Z'']")
                                                    (g/lit "")))
+      (g/remove (g/< (g/length :descriptor) 3))))
+
+(def log-spending
+  (-> descriptors
       (g/remove (g/||
                   (g/null? :customer-id)
-                  (g/< (g/length :descriptor) 3)
                   (g/< :price 0.01)
                   (g/< :quantity 1)))
       (g/group-by :customer-id :descriptor)
@@ -43,7 +47,7 @@
   (ml/pipeline
     (ml/string-indexer {:input-col  :descriptor
                         :output-col :descriptor-id})
-    (ml/als {:max-iter    5
+    (ml/als {:max-iter    100
              :reg-param   0.01
              :rank        8
              :nonnegative true
@@ -99,3 +103,61 @@
     (g/order-by :pattern-id)
     g/show)
 
+
+(comment
+  (g/print-schema (g/read-csv! spark "data/online_retail_ii"))
+  ; |-- Invoice: string (nullable = true)
+  ; |-- StockCode: string (nullable = true)
+  ; |-- Description: string (nullable = true)
+  ; |-- Quantity: string (nullable = true)
+  ; |-- InvoiceDate: string (nullable = true)
+  ; |-- Price: string (nullable = true)
+  ; |-- Customer ID: string (nullable = true)
+  ; |-- Country: string (nullable = true)
+
+  (-> invoices (g/limit 2) g/show-vertical)
+  ; -RECORD 0-------------------------------------------
+  ;  invoice      | 489434
+  ;  stock-code   | 85048
+  ;  description  | 15cm christmas glass ball 20 lights
+  ;  quantity     | 12
+  ;  invoice-date | 2009-12-01 07:45:00
+  ;  price        | 6.95
+  ;  customer-id  | 13085
+  ;  country      | United Kingdom
+  ; -RECORD 1-------------------------------------------
+  ;  invoice      | 489434
+  ;  stock-code   | 79323P
+  ;  description  | pink cherry lights
+  ;  quantity     | 12
+  ;  invoice-date | 2009-12-01 07:45:00
+  ;  price        | 6.75
+  ;  customer-id  | 13085
+  ;  country      | United Kingdom
+
+  (-> descriptors
+      (g/group-by :descriptor)
+      (g/agg {:total-quantity (g/sum :quantity)})
+      (g/sort (g/desc :total-quantity))
+      (g/limit 5)
+      g/show)
+  ; +----------+--------------+
+  ; |descriptor|total-quantity|
+  ; +----------+--------------+
+  ; |bag       |1092311       |
+  ; |set       |1033108       |
+  ; |red       |946096        |
+  ; |heart     |818834        |
+  ; |pack      |685145        |
+  ; +----------+--------------+
+
+  (-> log-spending (g/describe :log-spend) g/show))
+  ; +-------+--------------------+
+  ; |summary|log-spend           |
+  ; +-------+--------------------+
+  ; |count  |837985              |
+  ; |mean   |3.1732959032267756  |
+  ; |stddev |1.3183533551301005  |
+  ; |min    |0.058268908123975775|
+  ; |max    |12.034516532838857  |
+  ; +-------+--------------------+
