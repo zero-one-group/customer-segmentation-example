@@ -4,11 +4,12 @@
     [zero-one.geni.core :as g]
     [zero-one.geni.ml :as ml]))
 
-(defonce spark (g/create-spark-session {}))
+(defonce spark
+  (g/create-spark-session {:checkpoint-dir "checkpoint/"}))
 (.setCheckpointDir (.sparkContext spark) "checkpoint/") ;; TODO: set from map
 
 (def invoices
-  (-> (g/read-csv! spark "/data/online_retail_ii")
+  (-> (g/read-csv! spark "data/online_retail_ii")
       (g/select
         {:invoice      (g/int :Invoice)
          :stock-code   (g/int :StockCode)
@@ -43,7 +44,6 @@
       (g/agg {:log-spend (g/log1p (g/sum (g/* :price :quantity)))})
       (g/order-by (g/desc :log-spend))
       g/cache))
-(g/show log-spending)
 
 (def pipeline
   (ml/pipeline
@@ -61,9 +61,10 @@
   (ml/fit log-spending pipeline))
 
 (def id->descriptor
-  (ml/index-to-string {:input-col  :id
-                       :output-col :descriptor
-                       :labels (ml/labels (first (ml/stages pipeline-model)))}))
+  (ml/index-to-string
+    {:input-col  :id
+     :output-col :descriptor
+     :labels (ml/labels (first (ml/stages pipeline-model)))}))
 
 (def als-model (last (ml/stages pipeline-model)))
 
@@ -73,62 +74,27 @@
       (g/select :descriptor (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
-      (g/with-column :pattern-rank
-                      (g/over (g/row-number)
-                              (g/window {:partition-by :pattern-id
-                                         :order-by     (g/desc :factor-weight)})))
-      (g/filter (g/< :pattern-rank 9))
+      (g/with-column
+        :pattern-rank
+        ;; TODO: use window col
+        (g/over (g/row-number)
+                (g/window {:partition-by :pattern-id
+                           :order-by     (g/desc :factor-weight)})))
+      (g/filter (g/< :pattern-rank 6))
       (g/order-by :pattern-id (g/desc :factor-weight))
       (g/select :pattern-id :descriptor :factor-weight)))
-
 
 (def customer-segments
   (-> (ml/user-factors als-model)
       (g/select (g/as :id :customer-id) (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
-      (g/with-column :customer-rank
-                      (g/over (g/row-number)
-                              (g/window {:partition-by :customer-id
-                                         :order-by     (g/desc :factor-weight)})))
+      (g/with-column
+        :customer-rank
+        (g/over (g/row-number)
+                (g/window {:partition-by :customer-id
+                           :order-by     (g/desc :factor-weight)})))
       (g/filter (g/= :customer-rank 1))))
-(g/show customer-segments)
-
-(-> shared-patterns
-    (g/group-by :pattern-id)
-    (g/agg {:descriptors (g/array-sort (g/collect-set :descriptor))})
-    (g/order-by :pattern-id)
-    g/show)
-; +----------+------------------------------------------------------------------------+
-; |pattern-id|descriptors                                                             |
-; +----------+------------------------------------------------------------------------+
-; |0         |[eye, hanging, heart, holder, jun, peter, tigris, tlight]               |
-; |1         |[bar, cabin, draw, garld, kashmiri, roccoco, seventeen, sideboard]      |
-; |2         |[clockfuschia, coathangers, hot, jun, peter, pinkblack, rucksack, water]|
-; |3         |[bag, design, jumbo, lunch, pink, red, retrospot, suki]                 |
-; |4         |[bamboo, fig, retrodisc, rnd, scissor, sculpted, shapes, shelves]       |
-; |5         |[afghan, capiz, frutti, lazer, pair, seventeen, sideboard, yellowblue]  |
-; |6         |[cake, ceramic, fairy, hanging, metal, sign, stand, time]               |
-; |7         |[circus, mintivory, necklturquois, paper, parade, regency, set, tin]    |
-; +----------+------------------------------------------------------------------------+
-
-(-> customer-segments
-    (g/group-by :pattern-id)
-    (g/agg {:n-customers (g/count-distinct :customer-id)})
-    (g/order-by :pattern-id)
-    g/show)
-; +----------+-----------+
-; |pattern-id|n-customers|
-; +----------+-----------+
-; |0         |659        |
-; |1         |966        |
-; |2         |431        |
-; |3         |370        |
-; |4         |2017       |
-; |5         |621        |
-; |6         |347        |
-; |7         |467        |
-; +----------+-----------+
 
 (comment
   (g/print-schema (g/read-csv! spark "data/online_retail_ii"))
@@ -177,7 +143,7 @@
   ; |pack      |685145        |
   ; +----------+--------------+
 
-  (-> log-spending (g/describe :log-spend) g/show))
+  (-> log-spending (g/describe :log-spend) g/show)
   ; +-------+--------------------+
   ; |summary|log-spend           |
   ; +-------+--------------------+
@@ -187,3 +153,39 @@
   ; |min    |0.058268908123975775|
   ; |max    |12.034516532838857  |
   ; +-------+--------------------+
+
+  (-> customer-segments
+      (g/group-by :pattern-id)
+      (g/agg {:n-customers (g/count-distinct :customer-id)})
+      (g/order-by :pattern-id)
+      g/show)
+  ; +----------+-----------+
+  ; |pattern-id|n-customers|
+  ; +----------+-----------+
+  ; |0         |659        |
+  ; |1         |966        |
+  ; |2         |431        |
+  ; |3         |370        |
+  ; |4         |2017       |
+  ; |5         |621        |
+  ; |6         |347        |
+  ; |7         |467        |
+  ; +----------+-----------+
+
+  (-> shared-patterns
+      (g/group-by :pattern-id)
+      (g/agg {:descriptors (g/array-sort (g/collect-set :descriptor))})
+      (g/order-by :pattern-id)
+      g/show))
+  ; +----------+--------------------------------------------------+
+  ; |pattern-id|descriptors                                       |
+  ; +----------+--------------------------------------------------+
+  ; |0         |[heart, holder, jun, peter, tlight]               |
+  ; |1         |[bar, draw, kashmiri, seventeen, sideboard]       |
+  ; |2         |[clockfuschia, coathangers, jun, peter, pinkblack]|
+  ; |3         |[bag, jumbo, lunch, red, suki]                    |
+  ; |4         |[retrodisc, rnd, scissor, sculpted, shapes]       |
+  ; |5         |[afghan, capiz, lazer, seventeen, sideboard]      |
+  ; |6         |[cake, metal, sign, stand, time]                  |
+  ; |7         |[circus, paper, parade, regency, set]             |
+  ; +----------+--------------------------------------------------+
