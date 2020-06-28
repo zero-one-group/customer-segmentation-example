@@ -4,8 +4,7 @@
     [zero-one.geni.core :as g]
     [zero-one.geni.ml :as ml]))
 
-(defonce spark (g/create-spark-session {}))
-(.setCheckpointDir (.sparkContext spark) "checkpoint/") ;; TODO: set from map
+(defonce spark (g/create-spark-session {:checkpoint-dir "checkpoint/"}))
 
 (def invoices
   (-> (g/read-csv! spark "/data/online_retail_ii")
@@ -74,9 +73,9 @@
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
       (g/with-column :pattern-rank
-                      (g/over (g/row-number)
-                              (g/window {:partition-by :pattern-id
-                                         :order-by     (g/desc :factor-weight)})))
+                     (g/windowed {:window-col (g/row-number)
+                                  :partition-by :pattern-id
+                                  :order-by     (g/desc :factor-weight)}))
       (g/filter (g/< :pattern-rank 9))
       (g/order-by :pattern-id (g/desc :factor-weight))
       (g/select :pattern-id :descriptor :factor-weight)))
@@ -88,11 +87,10 @@
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
       (g/with-column :customer-rank
-                      (g/over (g/row-number)
-                              (g/window {:partition-by :customer-id
-                                         :order-by     (g/desc :factor-weight)})))
+                     (g/windowed {:window-col (g/row-number)
+                                  :partition-by :customer-id
+                                  :order-by     (g/desc :factor-weight)}))
       (g/filter (g/= :customer-rank 1))))
-(g/show customer-segments)
 
 (-> shared-patterns
     (g/group-by :pattern-id)
