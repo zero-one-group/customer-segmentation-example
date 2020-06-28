@@ -72,10 +72,11 @@
       (g/select :descriptor (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
-      (g/with-column :pattern-rank
-                     (g/windowed {:window-col   (g/row-number)
-                                  :partition-by :pattern-id
-                                  :order-by     (g/desc :factor-weight)}))
+      (g/with-column
+        :pattern-rank
+        (g/windowed {:window-col   (g/row-number)
+                     :partition-by :pattern-id
+                     :order-by     (g/desc :factor-weight)}))
       (g/filter (g/< :pattern-rank 6))
       (g/order-by :pattern-id (g/desc :factor-weight))
       (g/select :pattern-id :descriptor :factor-weight)))
@@ -85,10 +86,11 @@
       (g/select (g/as :id :customer-id) (g/posexplode :features))
       (g/rename-columns {:pos :pattern-id
                          :col :factor-weight})
-      (g/with-column :customer-rank
-                     (g/windowed {:window-col   (g/row-number)
-                                  :partition-by :customer-id
-                                  :order-by     (g/desc :factor-weight)}))
+      (g/with-column
+        :customer-rank
+        (g/windowed {:window-col   (g/row-number)
+                     :partition-by :customer-id
+                     :order-by     (g/desc :factor-weight)}))
       (g/filter (g/= :customer-rank 1))))
 
 
